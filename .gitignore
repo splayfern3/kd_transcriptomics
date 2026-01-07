@@ -6,3 +6,14 @@
 .DS_Store
 .quarto
 "transcriptome_data/"
+*.txt
+*.tsv
+*.csv
+*.gz
+*.zip
+*.tar
+*.CEL
+*.CEL.gz
+*.idat
+*.rds
+*.RData
