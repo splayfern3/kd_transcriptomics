@@ -4,7 +4,7 @@ collapse <- function(expr, anno) {
   collapsed <- collapseRows(
     datET = expr_s,
     rowGroup = anno$ENTREZID,
-    rowID = anno$PROBEID
+    rowID = anno$PROBEID,
     method = "MaxMean"
   )
   
