@@ -9,7 +9,9 @@ library(fgsea)
 library(illuminaHumanv3.db)
 library(illuminaHumanv4.db)
 library(AnnotationDbi)
+library("WGCNA")
 source("r_code/illumina_loader.R")
+source("r_code/gene_collapse.R")
 
 #load gse73461 to gse73463 along with the expression and pvalue files
 gse73461 <- load_illumina_geotxt(
@@ -22,14 +24,16 @@ expr73461_log2 <- log2(expr73461_lin + 1) #The paper used RSN normalization whic
 
 #gse73462 and 73463 do not undergo this log2 transformation because they were already transformed when inputted into RSN
 gse73462 <- load_illumina_geotxt(
-  path = "transcriptome_data/uncompressed/GSE73462_GEOupload_Validation_HT12V3_Dataset_Normalised_Sept_15_n_147.txt"
+  path = "transcriptome_data/uncompressed/GSE73462_GEOupload_Validation_HT12V3_Dataset_Normalised_Sept_15_n_147.txt",
+  floor_negatives_to_zero = FALSE
 )
 expr73462_log2 <- gse73462$expr_lin 
 pval73462 <- gse73462$pval
 
 
 gse73463 <- load_illumina_geotxt(
-  path = "transcriptome_data/uncompressed/GSE73463_GEOupload_Validation_HT12V4_Dataset_Normalised_Sept_15_n_233.txt"
+  path = "transcriptome_data/uncompressed/GSE73463_GEOupload_Validation_HT12V4_Dataset_Normalised_Sept_15_n_233.txt",
+  floor_negatives_to_zero = FALSE
 )
 expr73463_log2 <- gse73463$expr_lin
 pval73463 <- gse73463$pval
@@ -42,8 +46,20 @@ probe_ids63 <- rownames(expr73463_log2) #uses illuminaHumanv4 chip
 gplv4 <- read.delim("transcriptome_data/platforms/v4/GPL10558.txt", comment.char = "#", stringsAsFactors = FALSE)
 gplv3 <- read.delim("transcriptome_data/platforms/v3/GPL6947.txt", comment.char = "#", stringsAsFactors = FALSE)
 #map probe ids to gene name and symbol 
-annov4 <- gplv4[c("Array_Address_Id", "Symbol", "Definition")]
-annov3 <- gplv3[c("Array_Address_Id", "Symbol", "Definition")]
+annov4 <- gplv4[, c("Array_Address_Id", "Entrez_Gene_ID", "Symbol")]
+annov3 <- gplv3[, c("Array_Address_Id", "Entrez_Gene_ID", "Symbol")]
+#rename cols
+colnames(annov4) <- c("PROBEID", "ENTREZID", "SYMBOL")
+colnames(annov3) <- c("PROBEID", "ENTREZID", "SYMBOL")
+#mapped61 dataset is all the probes in annov4 that are in gse73461
+mapped61 <- annov4[annov4$PROBEID %in% probe_ids61, ]
+#remove values that are NA
+mapped61 <- mapped61[!is.na(mapped61$ENTREZID) & mapped61$ENTREZID != "", ]
 
+#same logic as above
+mapped62 <- annov3[annov3$PROBEID %in% probe_ids62, ]
+mapped62 <- mapped62[!is.na(mapped62$ENTREZID) & mapped62$ENTREZID != "" , ]
 
+mapped63 <- annov4[annov4$PROBEID %in% probe_ids63, ]
+mapped63<- mapped63[!is.na(mapped63$ENTREZID) & mapped63$ENTREZID != "", ]
 
