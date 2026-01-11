@@ -12,6 +12,13 @@ library(AnnotationDbi)
 library("WGCNA")
 source("r_code/illumina_loader.R")
 source("r_code/gene_collapse.R")
+source("r_code/meta_filter.R")
+
+# TODO: add getGEO w/ conditionals so pipeline can be ran w/o assuming files already downloaded
+# gse73463_meta <- getGEO("GSE73463", destdir = "transcriptome_data/uncompressed", getGPL = FALSE)
+
+
+
 
 #load gse73461 to gse73463 along with the expression and pvalue files
 gse73461 <- load_illumina_geotxt(
@@ -20,6 +27,7 @@ gse73461 <- load_illumina_geotxt(
 expr73461_lin <- gse73461$expr_lin
 pval73461 <- gse73461$pval
 
+  
 expr73461_log2 <- log2(expr73461_lin + 1) #The paper used RSN normalization which does not do log2 transformation so we must do it ourself
 
 #gse73462 and 73463 do not undergo this log2 transformation because they were already transformed when inputted into RSN
@@ -37,6 +45,14 @@ gse73463 <- load_illumina_geotxt(
 )
 expr73463_log2 <- gse73463$expr_lin
 pval73463 <- gse73463$pval
+gse73463_meta <- "transcriptome_data/uncompressed/GSE73463_series_matrix.txt.gz"
+metadata63 <- pData(gse73463_meta[[1]])
+
+#filter out rows with high p values (i.e their intensity is comparable to the background)
+
+res61 <- filter_by_metadata("GSE73461", expr73461_log2, pval73461, threshold = 0.5)
+res62 <- filter_by_metadata("GSE73462", expr73462_log2, pval73462, threshold = 0.5)
+res63 <- filter_by_metadata("GSE73463", expr73463_log2, pval73463, threshold = 0.5)
 
 #saving the rows of log2 normalized GSE data as probe IDs which will be mapped by AnnotationDbi 
 probe_ids61 <- rownames(expr73461_log2) #uses illuminaHumanv4 chip

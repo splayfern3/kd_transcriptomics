@@ -2,7 +2,7 @@
 
 #Function to load illumina data
 load_illumina_geotxt <- function(path, 
-                                 id_col = "ARRAY_ID",
+                                 id_col = "raw.ARRAY_ID",
                                  detect_pattern = "Detection",
                                  pval_suffix_regex = "_Detection_Pval$",
                                  floor_negatives_to_zero = TRUE) {
