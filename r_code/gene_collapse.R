@@ -1,12 +1,20 @@
 collapse <- function(expr, anno) {
-  expr_s <- expr[as.character(anno$PROBEID)] # align expr to anno
+  # 1. Filter annotation to only include probes that actually exist in the expr matrix
+  # This prevents 'subscript out of bounds' or empty matches
+  anno_sub <- anno[anno$PROBEID %in% rownames(expr), ]
   
-  collapsed <- collapseRows(
+  # 2. Align expr to anno - THE COMMA IS CRITICAL HERE
+  # expr[rows, columns]. Leaving columns blank selects all samples.
+  expr_s <- as.matrix(expr[as.character(anno_sub$PROBEID), ])
+  
+  # 3. Run WGCNA collapse logic
+  collapsed_obj <- WGCNA::collapseRows(
     datET = expr_s,
-    rowGroup = anno$ENTREZID,
-    rowID = anno$PROBEID,
+    rowGroup = anno_sub$SYMBOL,
+    rowID = anno_sub$PROBEID,
     method = "MaxMean"
   )
   
-  return(collapsed)
+  # 4. Return the matrix specifically so it can be piped
+  return(collapsed_obj$datETcollapsed)
 }

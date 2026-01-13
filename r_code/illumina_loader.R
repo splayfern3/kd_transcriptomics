@@ -1,46 +1,36 @@
-# R/loaders_illumina.R
-
-#Function to load illumina data
-load_illumina_geotxt <- function(path, 
-                                 id_col = "raw.ARRAY_ID",
-                                 detect_pattern = "Detection",
-                                 pval_suffix_regex = "_Detection_Pval$",
-                                 floor_negatives_to_zero = TRUE) {
+load_illumina_geotxt <- function(path, floor_negatives_to_zero = FALSE) {
+  # 1. Read the full file
+  full_data <- read.delim(path, check.names = FALSE, stringsAsFactors = FALSE)
   
-  raw <- read.table(
-    path,
-    header = TRUE,
-    sep = "\t",
-    stringsAsFactors = FALSE,
-    check.names = FALSE
-  )
+  # 2. SET ROW NAMES FIRST
+  # Use the first column (ARRAY_ID) as row names and then remove it from the data frame
+  # to prevent it from being accidentally treated as a numeric sample column.
+  rownames(full_data) <- as.character(full_data[[1]])
+  full_data <- full_data[, -1] 
   
-  cn <- colnames(raw)
-  is_id_col <- (cn == id_col)
-  is_pval_col <- grepl(detect_pattern, cn)
-  is_expr_col <- !is_id_col & !is_pval_col
+  # 3. Identify P-value columns
+  pval_cols <- grep("Pval|Detection", colnames(full_data), ignore.case = TRUE, value = TRUE)
   
-  probe_ids <- raw[[id_col]]
+  # 4. Identify Signal columns
+  # Since we removed column 1, all remaining non-Pval columns are potential signals
+  signal_cols <- gsub("_Detection_Pval|_Detection Pval|Detection Pval", "", pval_cols, ignore.case = TRUE)
   
-  expr <- as.matrix(raw[, is_expr_col, drop = FALSE]) #expression data in matrix format
-  pval <- as.matrix(raw[, is_pval_col, drop = FALSE]) #pvalue data in matrix format
-  #set probe ids to the rows
-  rownames(expr) <- probe_ids 
-  rownames(pval) <- probe_ids
+  # 5. Extract and Convert to Matrix
+  # Because we set rownames in step 2, expr and pval will inherit them automatically
+  expr <- as.matrix(full_data[, signal_cols])
+  pval <- as.matrix(full_data[, pval_cols])
   
-  stopifnot(ncol(expr) == ncol(pval))
-  
-  pval_names_stripped <- sub(pval_suffix_regex, "", colnames(pval)) #rename pval data by removing the detection_pval part
-  stopifnot(identical(colnames(expr), pval_names_stripped))
-  
-  if (floor_negatives_to_zero) {
+  # 6. Optional negative flooring
+  if(floor_negatives_to_zero) {
     expr[expr < 0] <- 0
   }
-  #returns
-  list(
-    raw = raw, #return raw data
-    expr_lin = expr, #return expr matrix
-    pval = pval, #return p value matrix
-    path = path #return path of files
-  )
+  
+  # Consistency Check
+  if(ncol(expr) != ncol(pval)) {
+    stop(paste("Mismatch! Found", ncol(expr), "signals and", ncol(pval), "p-values."))
+  }
+  
+  message("Successfully loaded ", ncol(expr), " samples and ", nrow(expr), " probes.")
+  
+  return(list(expr_lin = expr, pval = pval))
 }
