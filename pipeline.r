@@ -10,10 +10,18 @@ library(illuminaHumanv3.db)
 library(illuminaHumanv4.db)
 library(AnnotationDbi)
 library("WGCNA")
+library(ggplot2)
 source("r_code/illumina_loader.R")
 source("r_code/gene_collapse.R")
 source("r_code/meta_filter.R")
 source("r_code/process_study.R")
+source("r_code/clean_dx.R")
+
+install.packages(c("devtools", "clv", "fields", "matrixStats", "data.table", "cluster", "clue", "circlize", "gdata"))
+if (!requireNamespace("BiocManager", quietly = TRUE)) install.packages("BiocManager")
+BiocManager::install("ConsensusClusterPlus")
+
+
 # TODO: add getGEO w/ conditionals so pipeline can be ran w/o assuming files already downloaded
 # gse73463_meta <- getGEO("GSE73463", destdir = "transcriptome_data/uncompressed", getGPL = FALSE)
 
@@ -148,3 +156,113 @@ expr63_final <- process_study(
   mapped_df = mapped63_for_collapse, 
   dataset_name = "GSE73463"
 )
+
+common_genes <- intersect(rownames(expr61_final), 
+                          intersect(rownames(expr62_final), rownames(expr63_final)))
+
+expr61_sub <- expr61_final[common_genes, ]
+expr62_sub <- expr62_final[common_genes, ]
+expr63_sub <- expr63_final[common_genes, ]
+
+master_expr <- cbind(expr61_sub, expr62_sub, expr63_sub)
+
+# Process and clean metadata for all three studies
+meta61_f <- res61$metadata %>% 
+  mutate(Diagnosis = clean_dx(`category:ch1`), Study = "GSE73461") %>%
+  dplyr::select(title, Diagnosis, Study) # Explicitly use dplyr
+
+meta62_f <- res62$metadata %>% 
+  mutate(Diagnosis = clean_dx(`category:ch1`), Study = "GSE73462") %>%
+  dplyr::select(title, Diagnosis, Study)
+
+meta63_f <- res63$metadata %>% 
+  mutate(Diagnosis = clean_dx(`category:ch1`), Study = "GSE73463") %>%
+  dplyr::select(title, Diagnosis, Study)
+
+master_metadata_combined <- rbind(meta61_f, meta62_f, meta63_f)
+
+master_metadata_final <- master_metadata_combined %>%
+  filter(title %in% colnames(master_expr)) %>%
+  arrange(match(title, colnames(master_expr)))
+
+design <- model.matrix(~Diagnosis, data = master_metadata_final)
+
+master_expr_clean <- removeBatchEffect(
+  master_expr, 
+  batch = master_metadata_final$Study,
+  design = design
+)
+
+set.seed(42)
+
+umap_raw <- umap(t(master_expr))
+
+plot_df_raw <- data.frame(
+  UMAP1 = umap_raw$layout[,1],
+  UMAP2 = umap_raw$layout[,2],
+  Study = master_metadata_final$Study,
+  Diagnosis = master_metadata_final$Diagnosis
+)
+
+ggplot(plot_df_raw, aes(x = UMAP1, y = UMAP2, color = Study, shape = Diagnosis)) +
+  geom_point(size = 2.5, alpha = 0.8) +
+  theme_minimal() +
+  labs(title = "UMAP: Before Correction (Raw Merged)",
+       subtitle = "Expect samples to cluster primarily by Study")
+
+
+set.seed(42)
+umap_clean <- umap(t(master_expr_clean))
+
+plot_df_clean <- data.frame(
+  UMAP1 = umap_clean$layout[,1],
+  UMAP2 = umap_clean$layout[,2],
+  Study = master_metadata_final$Study,
+  Diagnosis = master_metadata_final$Diagnosis
+)
+
+# 3. Plot Cleaned
+ggplot(plot_df_clean, aes(x = UMAP1, y = UMAP2, color = Study, shape = Diagnosis)) +
+  geom_point(size = 2.5, alpha = 0.8) +
+  theme_minimal() +
+  labs(title = "UMAP: After Limma removeBatchEffect",
+       subtitle = "Expect KD samples from all studies to overlap")
+
+outlier_indices <- as.numeric(rownames(plot_df_clean[plot_df_clean$UMAP1 > 15, ]))
+outlier_info <- master_metadata_final[outlier_indices, ]
+print(outlier_info)
+
+group <- factor(master_metadata_final$Diagnosis, levels = c("Control", "KD"))
+design <- model.matrix(~group)
+colnames(design) <- c("Intercept", "KD_vs_Control")
+
+fit <- lmFit(master_expr_clean, design)
+fit <- eBayes(fit)
+
+res_de <- topTable(fit, coef = "KD_vs_Control", number = Inf, sort.by = "P")
+
+print(head(res_de, 10))
+
+gene_key <- rbind(annov4[, c("ENTREZID", "SYMBOL")], 
+                  annov3[, c("ENTREZID", "SYMBOL")]) %>%
+  distinct(ENTREZID, .keep_all = TRUE)
+res_de$ENTREZID <- rownames(res_de)
+res_de_symbols <- merge(res_de, gene_key, by = "ENTREZID", all.x = TRUE)
+res_de_symbols <- res_de_symbols[order(res_de_symbols$P.Value), ]
+print(head(res_de_symbols[, c("SYMBOL", "logFC", "adj.P.Val", "ENTREZID")], 20))
+
+entrez_ranks <- res_de$t
+names(entrez_ranks) <- rownames(res_de) # These are your Entrez IDs
+entrez_ranks <- na.omit(entrez_ranks)
+entrez_ranks <- sort(entrez_ranks, decreasing = TRUE)
+
+all_gene_sets <- msigdbr(species = "human", collection = "H")
+pathways_entrez <- split(x = as.character(all_gene_sets$ncbi_gene), 
+                         f = all_gene_sets$gs_name)
+pathways_entrez <- lapply(pathways_entrez, function(x) x[!is.na(x) & x != ""])
+names(entrez_ranks) <- as.character(names(entrez_ranks))
+set.seed(42)
+fgsea_entrez <- fgsea(pathways = pathways_entrez, 
+                      stats = entrez_ranks,
+                      minSize = 15,
+                      maxSize = 500)
