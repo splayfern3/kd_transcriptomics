@@ -11,6 +11,7 @@ library(illuminaHumanv4.db)
 library(AnnotationDbi)
 library("WGCNA")
 library(ggplot2)
+library(harmony)
 source("r_code/illumina_loader.R")
 source("r_code/gene_collapse.R")
 source("r_code/meta_filter.R")
@@ -18,10 +19,16 @@ source("r_code/process_study.R")
 source("r_code/clean_dx.R")
 
 install.packages(c("devtools", "clv", "fields", "matrixStats", "data.table", "cluster", "clue", "circlize", "gdata"))
+
+# Install the Bioconductor dependency
 if (!requireNamespace("BiocManager", quietly = TRUE)) install.packages("BiocManager")
 BiocManager::install("ConsensusClusterPlus")
 
+# Finally, install the RCC package itself
+devtools::install_github("MSCTR/RecursiveConsensusClustering"
 
+library(RecursiveConsensusClustering)
+                         
 # TODO: add getGEO w/ conditionals so pipeline can be ran w/o assuming files already downloaded
 # gse73463_meta <- getGEO("GSE73463", destdir = "transcriptome_data/uncompressed", getGPL = FALSE)
 
@@ -266,3 +273,66 @@ fgsea_entrez <- fgsea(pathways = pathways_entrez,
                       stats = entrez_ranks,
                       minSize = 15,
                       maxSize = 500)
+
+kd_indices <- which(master_metadata_final$Diagnosis == "KD")
+kd_expr <- master_expr_clean[, kd_indices]
+gene_vars <- apply(kd_expr, 1, var)
+top_genes <- names(sort(gene_vars, decreasing = TRUE))[1:2000]
+kd_expr_subset <- kd_expr[top_genes, ]
+kd_expr_subset <- na.omit(kd_expr_subset)
+rcc_results <- RecursiveConsensusClustering:::ccRun(
+  d = kd_expr_subset, 
+  maxK = 6, 
+  repCount = 100, 
+  clusterAlg = "km", 
+  distance = "euclidean",
+  pItem = 0.8,         # Standard: subsample 80% of items
+  pFeature = 1,        # Use all features in subsamples
+  verbose = TRUE
+)
+kd_matrix <- as.matrix(kd_expr_subset)
+class(kd_matrix) <- "matrix"
+kd_dist <- dist(t(kd_matrix), method = "euclidean")
+rcc_plots <- ConsensusClusterPlus(
+  d = kd_dist,
+  maxK = 6,
+  reps = 100,
+  pItem = 0.8,
+  pFeature = 1,
+  clusterAlg = "km",
+  distance = "euclidean",
+  title = "KD_Recursive_Clustering",
+  plot = "pdf",
+  writeTable = TRUE
+)
+
+kd_subgroups <- rcc_plots[[3]][["consensusClass"]]
+
+kd_meta <- master_metadata_final[kd_indices, ]
+kd_meta$Subgroup <- as.factor(kd_subgroups)
+
+table(kd_meta$Subgroup)
+
+study_table <- table(kd_meta$Subgroup, kd_meta$Study)
+print(study_table)
+chisq.test(study_table)
+
+meta_batch <- data.frame(study = master_metadata_final$Study[kd_indices])
+harm_out <- harmony::HarmonyMatrix(
+  data_mat = t(kd_matrix), 
+  meta_data = meta_batch, 
+  vars_use = 'study', 
+  do_pca = TRUE
+)
+
+kd_dist_harmony <- dist(harm_out)
+rcc_harmony <- ConsensusClusterPlus(
+  d = kd_dist_harmony,
+  maxK = 6,
+  reps = 100,
+  pItem = 0.8,
+  clusterAlg = "km",
+  distance = "euclidean",
+  title = "KD_Harmony_Integrated",
+  plot = "pdf"
+)
