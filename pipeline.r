@@ -12,6 +12,10 @@ library(AnnotationDbi)
 library("WGCNA")
 library(ggplot2)
 library(harmony)
+library(sigclust)
+library(pheatmap)
+library(plotly)
+library(patchwork)
 source("r_code/illumina_loader.R")
 source("r_code/gene_collapse.R")
 source("r_code/meta_filter.R")
@@ -20,11 +24,11 @@ source("r_code/clean_dx.R")
 
 install.packages(c("devtools", "clv", "fields", "matrixStats", "data.table", "cluster", "clue", "circlize", "gdata"))
 
-# Install the Bioconductor dependency
+
 if (!requireNamespace("BiocManager", quietly = TRUE)) install.packages("BiocManager")
 BiocManager::install("ConsensusClusterPlus")
 
-# Finally, install the RCC package itself
+
 devtools::install_github("MSCTR/RecursiveConsensusClustering"
 
 library(RecursiveConsensusClustering)
@@ -174,31 +178,307 @@ expr63_sub <- expr63_final[common_genes, ]
 master_expr <- cbind(expr61_sub, expr62_sub, expr63_sub)
 
 # Process and clean metadata for all three studies
+# Process and clean metadata for all three studies with Gender and Acuity
 meta61_f <- res61$metadata %>% 
-  mutate(Diagnosis = clean_dx(`category:ch1`), Study = "GSE73461") %>%
-  dplyr::select(title, Diagnosis, Study) # Explicitly use dplyr
+  mutate(
+    # 1. Add prefix to title
+    title = paste0("GSE73461_", title),
+    Diagnosis = clean_dx(`category:ch1`), 
+    Study = "GSE73461",
+    Gender = gsub("gender: ", "", `characteristics_ch1.2`),
+    Acuity = "Not Reported"
+  ) %>%
+  dplyr::select(title, Diagnosis, Study, Gender, Acuity)
+# Also prefix the expression matrix columns
+colnames(expr61_sub) <- paste0("GSE73461_", colnames(expr61_sub))
 
 meta62_f <- res62$metadata %>% 
-  mutate(Diagnosis = clean_dx(`category:ch1`), Study = "GSE73462") %>%
-  dplyr::select(title, Diagnosis, Study)
+  mutate(
+    title = paste0("GSE73462_", title),
+    Diagnosis = clean_dx(`category:ch1`), 
+    Study = "GSE73462",
+    Gender = gsub("gender: ", "", `characteristics_ch1.2`),
+    Acuity = "Not Reported"
+  ) %>%
+  filter(Diagnosis != "Uncertain") %>% # REMOVE UNCERTAIN
+  dplyr::select(title, Diagnosis, Study, Gender, Acuity)
+
+colnames(expr62_sub) <- paste0("GSE73462_", colnames(expr62_sub))
 
 meta63_f <- res63$metadata %>% 
-  mutate(Diagnosis = clean_dx(`category:ch1`), Study = "GSE73463") %>%
-  dplyr::select(title, Diagnosis, Study)
+  mutate(
+    title = paste0("GSE73463_", title),
+    Diagnosis = clean_dx(`category:ch1`), 
+    Study = "GSE73463",
+    Gender = gsub("gender: ", "", `characteristics_ch1.2`),
+    Acuity = case_when(
+      grepl("acute", `characteristics_ch1.1`, ignore.case = TRUE) ~ "Acute",
+      grepl("conv", `characteristics_ch1.1`, ignore.case = TRUE) ~ "Convalescent",
+      TRUE ~ "Unknown"
+    )
+  ) %>%
+  dplyr::select(title, Diagnosis, Study, Gender, Acuity)
+
+colnames(expr63_sub) <- paste0("GSE73463_", colnames(expr63_sub))
 
 master_metadata_combined <- rbind(meta61_f, meta62_f, meta63_f)
+master_expr <- cbind(expr61_sub, expr62_sub, expr63_sub)
 
 master_metadata_final <- master_metadata_combined %>%
   filter(title %in% colnames(master_expr)) %>%
   arrange(match(title, colnames(master_expr)))
 
-design <- model.matrix(~Diagnosis, data = master_metadata_final)
+rownames(master_metadata_final) <- master_metadata_final$title
 
-master_expr_clean <- removeBatchEffect(
-  master_expr, 
-  batch = master_metadata_final$Study,
-  design = design
+design <- model.matrix(~as.factor(Diagnosis), data = master_metadata_final)
+
+master_expr_combat <- ComBat(
+  dat = as.matrix(master_expr), 
+  batch = master_metadata_final$Study, 
+  mod = design, 
+  par.prior = TRUE
 )
+
+# set.seed(42)
+# umap_res <- umap(t(master_expr_combat))
+# 
+# umap_df <- data.frame(
+#   UMAP1 = umap_res$layout[,1],
+#   UMAP2 = umap_res$layout[,2],
+#   Study = master_metadata_final$Study,
+#   Diagnosis = master_metadata_final$Diagnosis,
+#   Gender = master_metadata_final$Gender
+# )
+# 
+# set.seed(42)
+# umap_before <- umap(t(master_expr)) # Use the raw merged matrix
+# df_before <- data.frame(umap_before$layout, Study=master_metadata_final$Study, Dx=master_metadata_final$Diagnosis)
+# 
+# set.seed(42)
+# umap_after <- umap(t(master_expr_combat)) # Use the corrected matrix
+# df_after <- data.frame(umap_after$layout, Study=master_metadata_final$Study, Dx=master_metadata_final$Diagnosis)
+# 
+# ggplot(umap_df, aes(x = UMAP1, y = UMAP2, color = Study)) +
+#   geom_point(alpha = 0.7) +
+#   theme_minimal() +
+#   labs(title = "UMAP: Batch Correction Check", subtitle = "Studies should overlap")
+# 
+# ggplot(umap_df, aes(x = UMAP1, y = UMAP2, color = Diagnosis)) +
+#   geom_point(alpha = 0.7) +
+#   theme_minimal() +
+#   labs(title = "UMAP: Biological Signal", subtitle = "KD vs Control separation")
+
+
+# pca_res <- prcomp(t(master_expr_combat), scale. = TRUE)
+# pca_data <- data.frame(pca_res$x, 
+#                        Study = master_metadata_final$Study, 
+#                        Dx = master_metadata_final$Diagnosis)
+# 
+# plot_ly(pca_data, x = ~PC1, y = ~PC2, z = ~PC3, 
+#         color = ~Study, symbol = ~Dx,
+#         type = 'scatter3d', mode = 'markers', marker = list(size = 3)) %>%
+#   layout(title = "3D PCA: Batch Integration Check")
+
+
+# custom_config <- umap.defaults
+# custom_config$n_components <- 3
+# umap_3d <- umap(t(master_expr_combat), config = custom_config)
+# umap_data <- data.frame(umap_3d$layout, 
+#                         Study = master_metadata_final$Study, 
+#                         Dx = master_metadata_final$Diagnosis)
+# 
+# plot_ly(umap_data, x = ~X1, y = ~X2, z = ~X3, 
+#         color = ~Dx, # Color by Diagnosis to find KD subgroups
+#         type = 'scatter3d', mode = 'markers', marker = list(size = 3)) %>%
+#   layout(title = "3D UMAP: Subgroup Discovery")
+
+
+
+# umap_3d_res <- umap(t(master_expr_combat), config = custom_config)
+# umap_3d_df <- data.frame(
+#   X = umap_3d_res$layout[,1],
+#   Y = umap_3d_res$layout[,2],
+#   Z = umap_3d_res$layout[,3],
+#   Study = master_metadata_final$Study,
+#   Diagnosis = master_metadata_final$Diagnosis
+# )
+cb_palette <- c("GSE73461" = "#E69F00", # Orange
+                "GSE73462" = "#56B4E9", # Sky Blue
+                "GSE73463" = "#009E73") # Bluish Green
+
+# plot_ly(umap_3d_df, x = ~X, y = ~Y, z = ~Z, 
+#         color = ~Study, 
+#         colors = cb_palette,
+#         stroke = I("black"), # Better contrast
+#         type = 'scatter3d', 
+#         mode = 'markers', 
+#         marker = list(size = 4, opacity = 0.8)) %>%
+#   layout(title = "3D UMAP: Batch Integration (Colorblind Friendly)",
+#          scene = list(xaxis = list(title = 'UMAP 1'),
+#                       yaxis = list(title = 'UMAP 2'),
+#                       zaxis = list(title = 'UMAP 3')))
+
+
+kd_indices <- which(master_metadata_final$Diagnosis == "KD")
+kd_expr <- master_expr_combat[, kd_indices]
+kd_meta <- master_metadata_final[kd_indices, ]
+
+# set.seed(42)
+# kd_umap_3d <- umap(t(kd_expr), config = custom_config)
+# umap_3d_df_kd <- data.frame(
+#   X = kd_umap_3d$layout[,1],
+#   Y = kd_umap_3d$layout[,2],
+#   Z = kd_umap_3d$layout[,3],
+#   Study = kd_meta$Study,
+#   Acuity = kd_meta$Acuity,
+#   Gender = kd_meta$Gender
+# )
+
+# plot_ly(umap_3d_df_kd, x = ~X, y = ~Y, z = ~Z, 
+#         color = ~Study, 
+#         colors = cb_palette,
+#         type = 'scatter3d', 
+#         mode = 'markers', 
+#         marker = list(size = 4, opacity = 0.8)) %>%
+#   layout(title = "3D UMAP: KD Samples Only (By Study)")
+
+#####################
+mod <- model.matrix(~as.factor(Diagnosis), data = master_metadata_final)
+master_expr_combat <- ComBat(dat = as.matrix(master_expr), 
+                             batch = master_metadata_final$Study, 
+                             mod = mod, par.prior = TRUE)
+
+kd_indices <- which(master_metadata_final$Diagnosis == "KD")
+kd_expr <- master_expr_combat[, kd_indices]
+kd_meta <- master_metadata_final[kd_indices, ]
+
+gene_mads <- apply(kd_expr, 1, mad)
+top_5k_genes <- names(sort(gene_mads, decreasing = TRUE))[1:5000]
+kd_scaled <- t(scale(t(kd_expr[top_5k_genes, ])))
+
+
+# --- 2. SUBGROUP DISCOVERY (The results_k10 Step) ---
+# I changed the title to 'KD_Final_Results' to avoid old file confusion
+results_k10 <- ConsensusClusterPlus(
+  d = d_dist_scaled, 
+  maxK = 10, 
+  reps = 1000, 
+  pItem = 0.8, 
+  clusterAlg = "hc", 
+  innerLinkage = "ward.D2", 
+  title = "KD_Final_Results", 
+  plot = "png" 
+)
+
+# Assign the stable K=3 Subgroups
+kd_meta$Subgroup <- as.factor(results_k10[[4]][["consensusClass"]])
+
+# --- 3. SAVE THE FRESH PLOTS TO YOUR MAIN FOLDER ---
+
+# PCA Plot
+pca_res <- prcomp(t(kd_scaled), scale. = FALSE)
+pca_df <- data.frame(
+  PC1 = pca_res$x[,1], PC2 = pca_res$x[,2], 
+  Acuity = kd_meta$Acuity, Subgroup = kd_meta$Subgroup
+)
+p_pca <- ggplot(pca_df, aes(x = PC1, y = PC2, color = Subgroup, shape = Acuity)) +
+  geom_point(alpha = 0.8, size = 5, stroke = 1.2) +
+  theme_bw() +
+  scale_color_manual(values = c("1" = "#E69F00", "2" = "#56B4E9", "3" = "#009E73", "4" = "#000B37")) +
+  labs(title = "Final Subgroup Discovery (K=4)", subtitle = "Validated by PAC and Silhouette Analysis")
+print(p_pca)
+dev.off()
+
+# Heatmap Plot
+# (Make sure top_50_safe and symbols are defined from your limma step)
+final_order <- order(kd_meta$Subgroup, kd_meta$Acuity)
+png("Discovery_Heatmap_Latest.png", width = 2400, height = 3200, res = 300)
+pheatmap(kd_scaled[top_50_safe, final_order], 
+         labels_row = symbols,
+         show_colnames = FALSE, cluster_cols = FALSE, 
+         annotation_col = kd_meta[final_order, c("Subgroup", "Acuity")],
+         annotation_colors = list(Acuity = c("Acute" = "#FF4500", "Convalescent" = "#1E90FF", "Not Reported" = "#D3D3D3"),
+                                  Subgroup = c("1" = "#E69F00", "2" = "#56B4E9", "3" = "#009E73")),
+         color = colorRampPalette(c("navy", "white", "firebrick3"))(100),
+         main = "Figure 2: Top 50 Gene Markers")
+dev.off()
+
+
+
+# Force plots to appear in the RStudio Plots pane
+p1 <- ggplot(val_df, aes(x=K, y=Silhouette)) +
+  geom_line(color="steelblue", linewidth=1) + 
+  geom_point(size=3) +
+  theme_bw() + 
+  labs(title="Silhouette Score", subtitle="Higher = Better Separation", y="Mean Width")
+
+p2 <- ggplot(val_df, aes(x=K, y=PAC)) +
+  geom_line(color="firebrick", linewidth=1) + 
+  geom_point(size=3) +
+  theme_bw() + 
+  labs(title="PAC Score", subtitle="Lower = Most Stable Clusters", y="Ambiguity Index")
+
+# This triggers the display
+p1 + p2
+library(ggplot2)
+library(ggrepel)
+library(patchwork)
+
+# Function for standardized, professional volcano plots
+make_poster_volcano <- function(fit_obj, coef_name, cluster_num) {
+  df <- topTable(fit_obj, coef = coef_name, number = Inf)
+  df$Symbol <- mapIds(org.Hs.eg.db, keys = rownames(df), column = "SYMBOL", keytype = "ENTREZID")
+  
+  # STATISTICAL LIMITS (Adjust these to change what gets colored)
+  p_thresh <- 1e-6    # Y-axis threshold
+  fc_thresh <- 1.0    # X-axis threshold (2-fold change)
+  
+  # Define coloring logic
+  df$diffexpressed <- "Not Significant"
+  df$diffexpressed[df$logFC > fc_thresh & df$P.Value < p_thresh] <- "Upregulated"
+  df$diffexpressed[df$logFC < -fc_thresh & df$P.Value < p_thresh] <- "Downregulated"
+  
+  # Get top 20 genes to label
+  top_labels <- rbind(
+    head(df[df$diffexpressed == "Upregulated", ], 10),
+    head(df[df$diffexpressed == "Downregulated", ], 10)
+  )
+  
+  ggplot(df, aes(x = logFC, y = -log10(P.Value), color = diffexpressed)) +
+    geom_point(alpha = 0.3, size = 1.2) +
+    # STANDARDIZED COLORS: Red for Up, Blue for Down, Grey for No
+    scale_color_manual(values = c("Downregulated" = "dodgerblue3", 
+                                  "Not Significant" = "grey80", 
+                                  "Upregulated" = "firebrick3")) +
+    geom_text_repel(data = top_labels, aes(label = Symbol), 
+                    size = 3.5, fontface = "bold", 
+                    box.padding = 0.5, segment.color = 'grey50',
+                    max.overlaps = Inf) +
+    # Removed subtitle, kept title only
+    theme_minimal() +
+    theme(legend.position = "none", 
+          panel.grid.minor = element_blank(),
+          plot.title = element_text(size = 16, face = "bold")) +
+    labs(title = paste("Cluster", cluster_num), 
+         x = "Log2 Fold Change", 
+         y = "-log10 P-value")
+}
+
+# Generate the 4 plots with consistent colors
+v1 <- make_poster_volcano(fit_clus2, "C1_vs_All", "1")
+v2 <- make_poster_volcano(fit_clus2, "C2_vs_All", "2")
+v3 <- make_poster_volcano(fit_clus2, "C3_vs_All", "3")
+v4 <- make_poster_volcano(fit_clus2, "C4_vs_All", "4")
+
+# Combine into a 2x2 grid
+(v1 | v2) / (v3 | v4)
+#######################
+
+
+
+unique_ids <- make.unique(master_metadata_final$title)
+rownames(master_metadata_final) <- unique_ids
+colnames(master_expr_filtered) <- unique_ids
 
 set.seed(42)
 
@@ -259,7 +539,7 @@ res_de_symbols <- res_de_symbols[order(res_de_symbols$P.Value), ]
 print(head(res_de_symbols[, c("SYMBOL", "logFC", "adj.P.Val", "ENTREZID")], 20))
 
 entrez_ranks <- res_de$t
-names(entrez_ranks) <- rownames(res_de) # These are your Entrez IDs
+names(entrez_ranks) <- rownames(res_de) 
 entrez_ranks <- na.omit(entrez_ranks)
 entrez_ranks <- sort(entrez_ranks, decreasing = TRUE)
 
@@ -273,66 +553,95 @@ fgsea_entrez <- fgsea(pathways = pathways_entrez,
                       stats = entrez_ranks,
                       minSize = 15,
                       maxSize = 500)
+# /////////////////////////////////////////////////////////////
+# kd_indices <- which(master_metadata_final$Diagnosis == "KD")
+# kd_expr <- master_expr_clean[, kd_indices]
+# gene_vars <- apply(kd_expr, 1, var)
+# top_genes <- names(sort(gene_vars, decreasing = TRUE))[1:2000]
+# kd_expr_subset <- kd_expr[top_genes, ]
+# kd_expr_subset <- na.omit(kd_expr_subset)
+# rcc_results <- RecursiveConsensusClustering:::ccRun(
+#   d = kd_expr_subset, 
+#   maxK = 6, 
+#   repCount = 100, 
+#   clusterAlg = "km", 
+#   distance = "euclidean",
+#   pItem = 0.8,         
+#   pFeature = 1,        
+#   verbose = TRUE
+# )
+# kd_matrix <- as.matrix(kd_expr_subset)
+# class(kd_matrix) <- "matrix"
+# kd_dist <- dist(t(kd_matrix), method = "euclidean")
+# rcc_plots <- ConsensusClusterPlus(
+#   d = kd_dist,
+#   maxK = 6,
+#   reps = 100,
+#   pItem = 0.8,
+#   pFeature = 1,
+#   clusterAlg = "km",
+#   distance = "euclidean",
+#   title = "KD_Recursive_Clustering",
+#   plot = "pdf",
+#   writeTable = TRUE
+# )
+# 
+# kd_subgroups <- rcc_plots[[3]][["consensusClass"]]
+# 
+# kd_meta <- master_metadata_final[kd_indices, ]
+# kd_meta$Subgroup <- as.factor(kd_subgroups)
+# 
+# table(kd_meta$Subgroup)
+# 
+# study_table <- table(kd_meta$Subgroup, kd_meta$Study)
+# print(study_table)
+# chisq.test(study_table)
+# 
+# meta_batch <- data.frame(study = master_metadata_final$Study[kd_indices])
+# harm_out <- harmony::HarmonyMatrix(
+#   data_mat = t(kd_matrix), 
+#   meta_data = meta_batch, 
+#   vars_use = 'study', 
+#   do_pca = TRUE
+# )
+# 
+# kd_dist_harmony <- dist(harm_out)
+# rcc_harmony <- ConsensusClusterPlus(
+#   d = kd_dist_harmony,
+#   maxK = 6,
+#   reps = 100,
+#   pItem = 0.8,
+#   clusterAlg = "km",
+#   distance = "euclidean",
+#   title = "KD_Harmony_Integrated",
+#   plot = "pdf"
+# )
+# 
+# 
+# 
+# 
+# gse63_idx <- which(kd_meta$Study == "GSE73463")
+# gse63_expr <- kd_expr[, gse63_idx]
+# gse63_vars <- apply(gse63_expr, 1, var)
+# top_gse63_genes <- names(sort(gse63_vars, decreasing = TRUE))[1:2000]
+# gse63_subset <- as.matrix(gse63_expr[top_gse63_genes, ])
+# gse63_dist <- dist(t(gse63_subset), method = "euclidean")
+# rcc_gse63 <- ConsensusClusterPlus(
+#   d = gse63_dist,
+#   maxK = 6,
+#   reps = 100,
+#   pItem = 0.8,
+#   clusterAlg = "km",
+#   distance = "euclidean",
+#   title = "KD_Discovery_GSE73463",
+#   plot = "pdf"
+# )
+# 
+# sig_test <- sigclust(t(gse63_subset), 
+#                      nsim = 100, # Start with 100 for speed, then 1000 for final paper
+#                      label = rcc_gse63[[2]][["consensusClass"]])
+# 
+# full_subset <- t(scale(t(kd_expr[marker_genes, ])))
 
-kd_indices <- which(master_metadata_final$Diagnosis == "KD")
-kd_expr <- master_expr_clean[, kd_indices]
-gene_vars <- apply(kd_expr, 1, var)
-top_genes <- names(sort(gene_vars, decreasing = TRUE))[1:2000]
-kd_expr_subset <- kd_expr[top_genes, ]
-kd_expr_subset <- na.omit(kd_expr_subset)
-rcc_results <- RecursiveConsensusClustering:::ccRun(
-  d = kd_expr_subset, 
-  maxK = 6, 
-  repCount = 100, 
-  clusterAlg = "km", 
-  distance = "euclidean",
-  pItem = 0.8,         # Standard: subsample 80% of items
-  pFeature = 1,        # Use all features in subsamples
-  verbose = TRUE
-)
-kd_matrix <- as.matrix(kd_expr_subset)
-class(kd_matrix) <- "matrix"
-kd_dist <- dist(t(kd_matrix), method = "euclidean")
-rcc_plots <- ConsensusClusterPlus(
-  d = kd_dist,
-  maxK = 6,
-  reps = 100,
-  pItem = 0.8,
-  pFeature = 1,
-  clusterAlg = "km",
-  distance = "euclidean",
-  title = "KD_Recursive_Clustering",
-  plot = "pdf",
-  writeTable = TRUE
-)
 
-kd_subgroups <- rcc_plots[[3]][["consensusClass"]]
 
-kd_meta <- master_metadata_final[kd_indices, ]
-kd_meta$Subgroup <- as.factor(kd_subgroups)
-
-table(kd_meta$Subgroup)
-
-study_table <- table(kd_meta$Subgroup, kd_meta$Study)
-print(study_table)
-chisq.test(study_table)
-
-meta_batch <- data.frame(study = master_metadata_final$Study[kd_indices])
-harm_out <- harmony::HarmonyMatrix(
-  data_mat = t(kd_matrix), 
-  meta_data = meta_batch, 
-  vars_use = 'study', 
-  do_pca = TRUE
-)
-
-kd_dist_harmony <- dist(harm_out)
-rcc_harmony <- ConsensusClusterPlus(
-  d = kd_dist_harmony,
-  maxK = 6,
-  reps = 100,
-  pItem = 0.8,
-  clusterAlg = "km",
-  distance = "euclidean",
-  title = "KD_Harmony_Integrated",
-  plot = "pdf"
-)
