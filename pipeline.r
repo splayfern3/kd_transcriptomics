@@ -83,9 +83,9 @@ gse63881_meta_obj <- getGEO("GSE63881", destdir = "transcriptome_data/uncompress
 gse63881_meta <- pData(gse63881_meta_obj[[1]])
 intensity_cols81 <- grep("^X.*(?<!Detection\\.Pval)$", colnames(raw_81), perl=TRUE, value=TRUE)
 pval_cols81 <- grep("Detection\\.Pval", colnames(raw_81), value=TRUE)
-expr81_lin <- raw_81[, intensity_cols]
+expr81_lin <- raw_81[, intensity_cols81]
 rownames(expr81_lin) <- raw_81$ID_REF
-pval81 <- raw_81[, pval_cols]
+pval81 <- raw_81[, pval_cols81]
 rownames(pval81) <- raw_81$ID_REF
 colnames(expr81_lin) <- gsub("^X", "", colnames(expr81_lin))
 colnames(pval81) <- colnames(expr81_lin)
@@ -99,7 +99,7 @@ colnames(pval73461)      <- gsub("_Detection_Pval|_Detection Pval", "", colnames
 meta61_full <- pData(gse73461_meta[[1]])
 keep61 <- apply(meta61_full, 1, function(row) any(grepl("Kawasaki|Control|KD", row, ignore.case = TRUE)))
 res61_meta_clean <- meta61_full[keep61, ]
-rownames(res61_meta_clean) <- res61_meta_clean$title
+res61$metadata <- res61_meta_clean[match(colnames(res61$expr), rownames(res61_meta_clean)), ]
 
 # For GSE73462
 colnames(expr73462_log2) <- gsub("_Detection_Pval|_Detection Pval", "", colnames(expr73462_log2))
@@ -484,7 +484,7 @@ p3 <- ggplot(pca_df_clinical, aes(x = PC1, y = PC2, color = IVIG, shape = Subgro
 combined_clinical_pca <- (p1) / (p2 | p3) + 
   plot_annotation(
     title = 'Integrative Clinical & Molecular PCA',
-    subtitle = 'Standardized Symbols: Subgroup 4 (+) is consistently associated with high-severity outcomes.'
+    
   )
 
 print(combined_clinical_pca)
@@ -831,7 +831,6 @@ fit_hc2 <- eBayes(fit_hc2)
 
 # --- STEP 3: PATHWAY ENRICHMENT (GSEA) ---
 
-m_df <- msigdbr(species = "Homo sapiens", category = "H")
 pathways_list <- split(x = m_df$gene_symbol, f = m_df$gs_name)
 gsea_hc_list <- list()
 
@@ -861,34 +860,51 @@ for(i in 1:4){
 }
 
 
-# --- STEP 4: FINAL DOT PLOT VISUALIZATION ---
+# 1. Identify the Top 10 Up and Top 10 Down for each cluster
+top_pathways_list <- lapply(names(gsea_results), function(name) {
+  res <- gsea_results[[name]] %>% filter(padj < 0.05)
+  
+  up <- res %>% slice_max(order_by = NES, n = 10)
+  down <- res %>% slice_min(order_by = NES, n = 10)
+  
+  return(unique(c(up$pathway, down$pathway)))
+})
 
-dot_data <- bind_rows(lapply(names(gsea_hc_list), function(x) {
-  gsea_hc_list[[x]] %>% mutate(Cluster = x)
+# 2. Get the unique set of all these pathways (The Union)
+all_top_pathways <- unique(unlist(top_pathways_list))
+
+# 3. Filter the full results for just these pathways
+dot_plot_df <- bind_rows(lapply(names(gsea_results), function(name) {
+  gsea_results[[name]] %>% 
+    filter(pathway %in% all_top_pathways) %>%
+    mutate(Cluster = name)
 }))
 
-# Filter for significance and pick top pathways per cluster
-top_dot_pathways <- dot_data %>%
-  filter(padj < 0.05) %>%
-  group_by(Cluster) %>%
-  top_n(15, wt = abs(NES)) %>%
-  ungroup()
+# 4. Clean Pathway Names
+dot_plot_df$pathway_clean <- gsub("_", " ", gsub("HALLMARK_", "", dot_plot_df$pathway))
 
-# Clean up pathway names for the plot
-top_dot_pathways$pathway <- gsub("_", " ", gsub("HALLMARK_", "", top_dot_pathways$pathway))
-
-ggplot(top_dot_pathways, aes(x = Cluster, y = reorder(pathway, NES))) +
+# 5. Create the Dot Plot
+ggplot(dot_plot_df, aes(x = Cluster, y = reorder(pathway_clean, NES))) +
+  # Use size for magnitude and color for direction/significance
   geom_point(aes(size = abs(NES), color = NES)) +
+  
+  # Professional Red/Blue Divergent Scale
   scale_color_gradient2(low = "dodgerblue3", mid = "white", high = "firebrick3", midpoint = 0) +
+  
+  # Theme and Labels
   theme_bw() +
-  labs(title = "Pathway Enrichment Comparison: KD Clusters vs. Healthy Controls",
-       x = NULL, y = "Biological Pathway",
-       size = "Enrichment Magnitude (abs NES)", 
-       color = "Enrichment Direction") +
-  theme(axis.text.x = element_text(face = "bold", size = 11),
-        axis.text.y = element_text(size = 9),
-        panel.grid.major = element_line(color = "grey95"))
-
+  labs(title = "Comparative Pathway Signatures: Top 10 Up/Down per Cluster",
+       subtitle = "Dot size = Magnitude of Enrichment | Color = Direction (NES)",
+       x = "Molecular Subgroup",
+       y = "Hallmark Pathway",
+       size = "abs(NES)",
+       color = "NES Score") +
+  theme(
+    axis.text.x = element_text(face = "bold", size = 10),
+    axis.text.y = element_text(size = 8),
+    panel.grid.major = element_line(color = "grey95"),
+    legend.position = "right"
+  )
 # --- PCA: PC1 vs PC2 with Control Diamonds ---
 pca_full <- prcomp(t(master_expr_combat), scale. = TRUE)
 pca_df <- data.frame(
@@ -914,16 +930,11 @@ print(p_pca_final)
 
 
 p_violins_sina <- ggplot(le_plot_df, aes(x = Group, y = Score, fill = Group)) +
-  # 1. The Violin Outline
   geom_violin(alpha = 0.2, scale = "width", color = "grey30", trim = TRUE) + 
-  
-  # 2. Sina Plot: Dots contained within boundaries
   geom_sina(aes(color = Group), size = 1.2, alpha = 0.6, maxwidth = 0.8) +
-  
-  # 3. Reference Boxplot
   geom_boxplot(width = 0.1, outlier.shape = NA, fill = "white", color = "black", alpha = 0.5) +
-  
-  facet_wrap(~Pathway, scales = "free_y", ncol = 5) +
+  # Fixed: changed ncol to 4 and adjusted text size to prevent title clipping
+  facet_wrap(~Pathway, scales = "free_y", ncol = 4) +
   scale_fill_manual(values = c("Cluster_1" = "#E69F00", "Cluster_2" = "#56B4E9", 
                                "Cluster_3" = "#009E73", "Cluster_4" = "#000B37", 
                                "Cluster_control" = "#D55E00")) +
@@ -934,17 +945,12 @@ p_violins_sina <- ggplot(le_plot_df, aes(x = Group, y = Score, fill = Group)) +
   theme(
     axis.text.x = element_text(angle = 45, hjust = 1, size = 8),
     strip.background = element_rect(fill = "grey95"),
-    strip.text = element_text(face = "bold", size = 9),
-    legend.position = "right", # CHANGED: Key is now on the right
-    plot.title = element_text(hjust = 0.5, face = "bold", size = 14)
+    # Fixed: decreased size slightly to ensure "REACTIVE OXYGEN SPECIES" fits
+    strip.text = element_text(face = "bold", size = 8), 
+    legend.position = "right"
   ) +
-  labs(
-    title = "Leading Edge Pathway Scores with Individual Sample Distribution",
-    y = "Z-score Normalized Expression",
-    x = NULL
-  ) +
-  # This makes the dots in the legend easier to see
-  guides(color = guide_legend(override.aes = list(size = 4, alpha = 1)))
+  labs(title = "Leading Edge Pathway Scores with Individual Sample Distribution",
+       y = "Z-score Normalized Expression", x = NULL)
 
 print(p_violins_sina)
 
@@ -1003,11 +1009,8 @@ pheatmap(plot_mat,
          show_colnames = FALSE, 
          cluster_cols = FALSE, 
          cluster_rows = FALSE, # Keep them grouped by cluster (10 genes each)
-         annotation_col = kd_meta[final_order, c("Subgroup", "Acuity")],
-         annotation_colors = list(
-           Acuity = c("Acute" = "#FF4500", "Convalescent" = "#1E90FF", "Not Reported" = "#D3D3D3"),
-           Subgroup = c("1" = "#E69F00", "2" = "#56B4E9", "3" = "#009E73", "4" = "#000B37")
-         ),
+         annotation_col = kd_meta[final_order, c("Acuity", "IVIG_Status", "Aneurysm_Status", "Subgroup")],
+         annotation_colors = anno_colors,
          color = colorRampPalette(c("navy", "white", "firebrick3"))(100),
          main = "Subgroup-Specific Discovery: Top 10 Markers per Cluster")
 
@@ -1089,11 +1092,8 @@ my_breaks <- seq(-0.4, 0.4, length.out = 101)
 pheatmap(gsva_results[, final_order],
          show_colnames = FALSE,
          cluster_cols = FALSE,
-         annotation_col = kd_meta[final_order, c("Subgroup", "Acuity")],
-         annotation_colors = list(
-           Acuity = c("Acute" = "#D55E00", "Convalescent" = "#0072B2", "Not Reported" = "#999999"),
-           Subgroup = c("1" = "#E69F00", "2" = "#56B4E9", "3" = "#009E73", "4" = "#000B37")
-         ),
+         annotation_col = kd_meta[final_order, c("Acuity", "IVIG_Status", "Aneurysm_Status", "Subgroup")],
+         annotation_colors = anno_colors,
          color = colorRampPalette(c("#2166ac", "#f7f7f7", "#b2182b"))(100),
          breaks = my_breaks, # <--- Add this line for extreme scaling
          main = "Figure 3: Hallmark Pathway Variation (High Contrast)")
