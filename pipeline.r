@@ -607,7 +607,6 @@ contrast_matrix <- makeContrasts(
   levels = design
 )
 
-# This is your fit_clus2!
 fit_clus2 <- contrasts.fit(fit, contrast_matrix)
 fit_clus2 <- eBayes(fit_clus2)
 
@@ -977,14 +976,23 @@ contrast_matrix <- makeContrasts(
 fit2 <- contrasts.fit(fit, contrast_matrix)
 fit2 <- eBayes(fit2)
 
-# 3. Extract the Top 10 markers for EVERY cluster
 all_markers <- lapply(1:4, function(i) {
-  topTable(fit2, coef = i, number = 10, sort.by = "logFC")
+  # Using number = Inf ensures we don't miss any genes
+  # Removing sort.by allows us to handle the sorting in our master pipe
+  topTable(fit2, coef = i, number = Inf) 
 })
+# Important: Name the list so the .id = "cluster" step works
+names(all_markers) <- c("1", "2", "3", "4")
 
-# Combine them into one list of 40 genes
-unique_marker_ids <- unique(unlist(lapply(all_markers, rownames)))
-
+target_genes <- all_markers %>%
+  lapply(function(x) rownames_to_column(as.data.frame(x), var = "gene")) %>%
+  bind_rows(.id = "cluster") %>%
+  filter(abs(logFC) > 1) %>%
+  group_by(cluster) %>%
+  slice_min(order_by = P.Value, n = 10, with_ties = FALSE) %>%
+  pull(gene) %>%
+  unique()
+unique_marker_ids <- target_genes
 # 1. Pull these 40 unique genes from the FULL KD expression matrix
 # This avoids the "out of bounds" error because we go back to the source
 raw_marker_mat <- kd_expr[unique_marker_ids, ]
@@ -1012,7 +1020,7 @@ pheatmap(plot_mat,
          annotation_col = kd_meta[final_order, c("Acuity", "IVIG_Status", "Aneurysm_Status", "Subgroup")],
          annotation_colors = anno_colors,
          color = colorRampPalette(c("navy", "white", "firebrick3"))(100),
-         main = "Subgroup-Specific Discovery: Top 10 Markers per Cluster")
+         main = "Top 10 Markers per Cluster")
 
 # 1. Create a contingency table (Counts of Acuity per Cluster)
 clinical_table <- table(kd_meta$Subgroup, kd_meta$Acuity)
@@ -1097,4 +1105,35 @@ pheatmap(gsva_results[, final_order],
          color = colorRampPalette(c("#2166ac", "#f7f7f7", "#b2182b"))(100),
          breaks = my_breaks, # <--- Add this line for extreme scaling
          main = "Figure 3: Hallmark Pathway Variation (High Contrast)")
+
+# Helper function to process and map symbols/descriptions
+process_marker_list <- function(marker_list) {
+  lapply(names(marker_list), function(cid) {
+    df <- as.data.frame(marker_list[[cid]])
+    df$Entrez_ID <- rownames(df)
+    df$Cluster <- cid
+    return(df)
+  }) %>%
+    bind_rows() %>%
+    mutate(
+      Symbol = mapIds(org.Hs.eg.db, keys=Entrez_ID, column="SYMBOL", keytype="ENTREZID", multiVals="first"),
+      Description = mapIds(org.Hs.eg.db, keys=Entrez_ID, column="GENENAME", keytype="ENTREZID", multiVals="first")
+    ) %>%
+    select(Cluster, Symbol, Entrez_ID, Description, logFC, P.Value, adj.P.Val) %>%
+    arrange(Cluster, P.Value)
+}
+
+# --- GENERATE TABLE 1: Cluster vs. Other KD (Subgroup Discovery) ---
+table_subgroups <- process_marker_list(all_markers) # Assumes all_markers came from fit_clus2
+write.csv(table_subgroups, "Table1_Cluster_vs_Cluster_Full.csv", row.names = FALSE)
+
+# --- GENERATE TABLE 2: Cluster vs. Healthy Controls ---
+# Note: You must run the gsea_hc_list loop or topTable on fit_hc2 first to populate this
+all_markers_hc <- lapply(1:4, function(i) {
+  topTable(fit_hc2, coef = i, number = Inf)
+})
+names(all_markers_hc) <- c("1", "2", "3", "4")
+
+table_hc_comparison <- process_marker_list(all_markers_hc)
+write.csv(table_hc_comparison, "Table2_Cluster_vs_HealthyControls_Full.csv", row.names = FALSE)
 #######################
