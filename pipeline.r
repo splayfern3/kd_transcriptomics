@@ -668,13 +668,13 @@ make_poster_volcano <- function(fit_obj, coef_name, cluster_num) {
   df$Symbol <- mapIds(org.Hs.eg.db, keys = rownames(df), column = "SYMBOL", keytype = "ENTREZID")
   
   # STATISTICAL LIMITS (Adjust these to change what gets colored)
-  p_thresh <- 1e-6    # Y-axis threshold
+  p_thresh <- 0.05    # FDR threshold (adj.P.Val)
   fc_thresh <- 1.0    # X-axis threshold (2-fold change)
-  
+
   # Define coloring logic
   df$diffexpressed <- "Not Significant"
-  df$diffexpressed[df$logFC > fc_thresh & df$P.Value < p_thresh] <- "Upregulated"
-  df$diffexpressed[df$logFC < -fc_thresh & df$P.Value < p_thresh] <- "Downregulated"
+  df$diffexpressed[df$logFC > fc_thresh & df$adj.P.Val < p_thresh] <- "Upregulated"
+  df$diffexpressed[df$logFC < -fc_thresh & df$adj.P.Val < p_thresh] <- "Downregulated"
   
   # Get top 20 genes to label
   top_labels <- rbind(
@@ -682,7 +682,7 @@ make_poster_volcano <- function(fit_obj, coef_name, cluster_num) {
     head(df[df$diffexpressed == "Downregulated", ], 10)
   )
   
-  ggplot(df, aes(x = logFC, y = -log10(P.Value), color = diffexpressed)) +
+  ggplot(df, aes(x = logFC, y = -log10(adj.P.Val), color = diffexpressed)) +
     geom_point(alpha = 0.3, size = 1.2) +
     # STANDARDIZED COLORS: Red for Up, Blue for Down, Grey for No
     scale_color_manual(values = c("Downregulated" = "dodgerblue3", 
