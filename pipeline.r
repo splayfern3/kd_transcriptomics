@@ -119,23 +119,15 @@ rownames(meta63_full) <- meta63_full$title
 
 # --- Process GSE73461 ---
 res61 <- filter_by_metadata("GSE73461", expr73461_log2, pval73461, threshold = 0.5)
-common61 <- intersect(colnames(expr73461_log2), rownames(res61_meta_clean))
-res61$expr <- expr73461_log2[, common61]
-res61$metadata <- res61_meta_clean[common61, ]
-# Note: if filter_by_metadata returns pvals, align them too:
-# res61$pval <- pval73461[, common61]
+res61$metadata <- res61_meta_clean[intersect(colnames(res61$expr), rownames(res61_meta_clean)), ]
 
 # --- Process GSE73462 ---
 res62 <- filter_by_metadata("GSE73462", expr73462_log2, pval73462, threshold = 0.5)
-common62 <- intersect(colnames(expr73462_log2), rownames(meta62_full))
-res62$expr <- expr73462_log2[, common62]
-res62$metadata <- meta62_full[common62, ]
+res62$metadata <- meta62_full[intersect(colnames(res62$expr), rownames(meta62_full)), ]
 
 # --- Process GSE73463 ---
 res63 <- filter_by_metadata("GSE73463", expr73463_log2, pval73463, threshold = 0.5)
-common63 <- intersect(colnames(expr73463_log2), rownames(meta63_full))
-res63$expr <- expr73463_log2[, common63]
-res63$metadata <- meta63_full[common63, ]
+res63$metadata <- meta63_full[intersect(colnames(res63$expr), rownames(meta63_full)), ]
 
 # --- Process GSE63881 ---
 pval81 <- pval81[complete.cases(pval81), ] #Remove NAs
