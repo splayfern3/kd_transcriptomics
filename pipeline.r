@@ -50,13 +50,16 @@ gse73461 <- load_illumina_geotxt(
   path = "transcriptome_data/uncompressed/GSE73461_GEOupload_Discovery_Dataset_Normalised_Sept_15_n_459.txt"
 )
 expr73461_lin <- gse73461$expr_lin
-expr73461_lin[expr73461_lin < 0] <- 0
 pval73461 <- gse73461$pval
 #Remove columns filled with NA
 na_cols61 <- which(colSums(is.na(expr73461_lin)) == nrow(expr73461_lin))
 if(length(na_cols61) > 0) expr73461_lin <- expr73461_lin[, -na_cols61]
-  
-expr73461_log2 <- log2(expr73461_lin + 1) #The paper used RSN normalization which does not do log2 transformation so we must do it 
+expr73461_lin[expr73461_lin < 1] <- 1
+expr73461_log2 <- log2(expr73461_lin)
+expr73461_log2 <- normalize.quantiles(as.matrix(expr73461_log2))
+rownames(expr73461_log2) <- rownames(expr73461_lin)
+colnames(expr73461_log2) <- colnames(expr73461_lin)
+rm(expr73461_lin); gc()
 gse73461_meta <- getGEO("GSE73461", destdir = "transcriptome_data/uncompressed", getGPL = FALSE) # get meta
 
 #gse73462 and 73463 do not undergo this log2 transformation because they were already transformed when inputted into RSN
@@ -89,7 +92,12 @@ pval81 <- raw_81[, pval_cols81]
 rownames(pval81) <- raw_81$ID_REF
 colnames(expr81_lin) <- gsub("^X", "", colnames(expr81_lin))
 colnames(pval81) <- colnames(expr81_lin)
-expr81_log2 <- log2(expr81_lin + 1)
+expr81_lin[expr81_lin < 1] <- 1
+expr81_log2 <- log2(expr81_lin)
+expr81_log2 <- normalize.quantiles(as.matrix(expr81_log2))
+rownames(expr81_log2) <- rownames(expr81_lin)
+colnames(expr81_log2) <- colnames(expr81_lin)
+rm(expr81_lin); gc()
 
 #CLEANING
 
@@ -327,10 +335,6 @@ master_metadata_final <- master_metadata_combined %>%
 
 rownames(master_metadata_final) <- master_metadata_final$title
 master_expr_final <- master_expr[, master_metadata_final$title]
-#Quantile normalization
-master_norm <- normalize.quantiles(as.matrix(master_expr_final))
-rownames(master_norm) <- rownames(master_expr_final)
-colnames(master_norm) <- colnames(master_expr_final)
 
 
 cb_palette <- c("GSE73461" = "#E69F00", # Orange
@@ -346,7 +350,7 @@ cb_palette <- c("GSE73461" = "#E69F00", # Orange
 #####################
 # combat to remove batch effects between studies
 mod <- model.matrix(~as.factor(Diagnosis), data = master_metadata_final)
-master_expr_combat <- ComBat(dat = master_norm, 
+master_expr_combat <- ComBat(dat = master_expr_final,
                              batch = master_metadata_final$Study, 
                              mod = mod, par.prior = TRUE)
 
