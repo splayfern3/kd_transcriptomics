@@ -107,6 +107,7 @@ colnames(pval73461)      <- gsub("_Detection_Pval|_Detection Pval", "", colnames
 meta61_full <- pData(gse73461_meta[[1]])
 keep61 <- apply(meta61_full, 1, function(row) any(grepl("Kawasaki|Control|KD", row, ignore.case = TRUE)))
 res61_meta_clean <- meta61_full[keep61, ]
+rownames(res61_meta_clean) <- res61_meta_clean$title
 
 # For GSE73462
 colnames(expr73462_log2) <- gsub("_Detection_Pval|_Detection Pval", "", colnames(expr73462_log2))
