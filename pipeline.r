@@ -29,16 +29,6 @@ source("r_code/meta_filter.R")
 source("r_code/process_study.R")
 source("r_code/clean_dx.R")
 
-install.packages(c("devtools", "clv", "fields", "matrixStats", "data.table", "cluster", "clue", "circlize", "gdata"))
-
-
-if (!requireNamespace("BiocManager", quietly = TRUE)) install.packages("BiocManager")
-BiocManager::install("ConsensusClusterPlus")
-
-
-devtools::install_github("MSCTR/RecursiveConsensusClustering")
-library(RecursiveConsensusClustering)
-                         
 # TODO: add getGEO w/ conditionals so pipeline can be ran w/o assuming files already downloaded
 # gse73463_meta <- getGEO("GSE73463", destdir = "transcriptome_data/uncompressed", getGPL = FALSE)
 
