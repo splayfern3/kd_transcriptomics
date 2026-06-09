@@ -156,6 +156,11 @@ meta81_kd_all <- gse63881_meta %>%
   filter(`phenotype:ch1` %in% kd_phenotypes) %>%
   filter(`phase:ch1` %in% target_phases)
 
+# Map GSM IDs to Scan IDs so rownames match expr81_log2 colnames
+gsm_to_scan <- setNames(mapping_table$Scan_ID, mapping_table$GSM_ID)
+meta81_kd_all$scan_id <- gsm_to_scan[rownames(meta81_kd_all)]
+rownames(meta81_kd_all) <- meta81_kd_all$scan_id
+
 # Align the Expression and P-value matrices
 common_samples <- intersect(colnames(expr81_log2), rownames(meta81_kd_all))
 expr81_final_subset <- expr81_log2[, common_samples]
