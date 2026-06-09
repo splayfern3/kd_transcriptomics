@@ -728,9 +728,12 @@ for(i in 1:4){
   ranks <- tab$t
   names(ranks) <- tab$Symbol
   
-  # CLEANING: Remove NAs AND Remove Duplicated gene names
+  # CLEANING: Remove NAs, keep highest |t| for duplicated symbols
   ranks <- ranks[!is.na(names(ranks))]
-  ranks <- ranks[!duplicated(names(ranks))] 
+  ranks_df <- data.frame(symbol = names(ranks), t = ranks)
+  ranks_df <- ranks_df[order(-abs(ranks_df$t)), ]
+  ranks_df <- ranks_df[!duplicated(ranks_df$symbol), ]
+  ranks <- setNames(ranks_df$t, ranks_df$symbol)
   ranks <- sort(ranks, decreasing = TRUE)
   
   # Run GSEA
@@ -839,8 +842,11 @@ for(i in 1:4){
   ranks <- tab_clean$t
   names(ranks) <- tab_clean$Symbol
   
-  # Remove duplicates and sort
-  ranks <- sort(ranks[!duplicated(names(ranks))], decreasing = TRUE)
+  # Remove duplicates (keep highest |t|) and sort
+  ranks_df2 <- data.frame(symbol = names(ranks), t = ranks)
+  ranks_df2 <- ranks_df2[order(-abs(ranks_df2$t)), ]
+  ranks_df2 <- ranks_df2[!duplicated(ranks_df2$symbol), ]
+  ranks <- sort(setNames(ranks_df2$t, ranks_df2$symbol), decreasing = TRUE)
   
   # Run GSEA
   gsea_hc_list[[paste0("Cluster ", i)]] <- fgsea(pathways = pathways_list, 
