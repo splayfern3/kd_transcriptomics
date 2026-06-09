@@ -164,11 +164,6 @@ res81 <- list(
 )
 
 
-#saving the rows of log2 normalized GSE data as probe IDs which will be mapped by AnnotationDbi 
-probe_ids61 <- rownames(res61) #uses illuminaHumanv4 chip
-probe_ids62 <- rownames(res62) #uses illuminaHumanv3 chip
-probe_ids63 <- rownames(res63) #uses illuminaHumanv4 chip
-probe_ids81 <- rownames(res81) #uses illuminaHumanv4 chip
 gplv4 <- read.delim("transcriptome_data/platforms/v4/GPL10558.txt", comment.char = "#", stringsAsFactors = FALSE)
 gplv3 <- read.delim("transcriptome_data/platforms/v3/GPL6947.txt", comment.char = "#", stringsAsFactors = FALSE)
 #map probe ids to gene name and symbol 
