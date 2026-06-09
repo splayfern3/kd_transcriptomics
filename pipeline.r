@@ -389,6 +389,7 @@ kd_scaled <- t(scale(t(kd_expr[top_5k_genes, ])))
 d_dist_scaled <- as.dist(1 - cor(kd_scaled, method = "pearson"))
 
 # recursive clustering up to k = 10
+set.seed(42)
 results_k10 <- ConsensusClusterPlus(
   d = d_dist_scaled, 
   maxK = 10, #max of 10 clusters
