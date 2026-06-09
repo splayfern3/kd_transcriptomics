@@ -799,11 +799,11 @@ combined_meta <- rbind(kd_to_join, hc_to_join)
 # Strip GSE prefix to match matrix column names
 combined_meta$clean_title <- sub("^GSE[0-9]+_", "", combined_meta$title)
 
-common_samples <- intersect(combined_meta$clean_title, colnames(master_expr_filtered))
+common_samples <- intersect(combined_meta$clean_title, colnames(master_expr_combat))
 message("Successfully Synced Samples: ", length(common_samples))
 
 combined_meta_final <- combined_meta[combined_meta$clean_title %in% common_samples, ]
-combined_expr_final <- master_expr_filtered[, combined_meta_final$clean_title]
+combined_expr_final <- master_expr_combat[, combined_meta_final$clean_title]
 
 colnames(combined_expr_final) <- combined_meta_final$title
 combined_meta_final$Group <- factor(paste0("Cluster_", combined_meta_final$Subgroup))
